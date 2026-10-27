@@ -128,3 +128,23 @@ label input, label select, label textarea { margin-top: 4px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .header-actions { margin: 0; }
 .member-email { color: var(--muted); }
+
+[hidden] { display: none !important; }
+button:disabled { opacity: .4; cursor: default; }
+td a { color: var(--accent); }
+
+.dialog-body { padding: 20px; }
+dialog h3 { margin: 18px 0 2px; font-size: 14px; }
+.hint { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+.error { color: var(--danger); font-size: 13px; margin-top: 10px; min-height: 1em; }
+
+label.check { display: flex; align-items: center; gap: 8px; color: var(--text); }
+label.check input { width: auto; margin: 0; }
+.check-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+
+.column-list { list-style: none; margin: 0 0 12px; padding: 0; border: 1px solid var(--border); border-radius: 8px; }
+.column-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 12px; border-top: 1px solid var(--border); }
+.column-list li:first-child { border-top: 0; }
+.column-list li.empty { justify-content: center; padding: 16px; }
+.column-list small { display: block; color: var(--muted); }
+.column-actions { display: flex; gap: 4px; }

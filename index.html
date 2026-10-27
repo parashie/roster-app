@@ -14,6 +14,7 @@
     </div>
     <div class="toolbar header-actions">
       <button class="primary" id="addBtn">+ Add member</button>
+      <button id="columnsBtn" title="Add, edit, or hide columns">Manage columns</button>
       <button id="exportBtn" title="Download a backup file of the roster">Download backup</button>
       <button id="importBtn" title="Load a roster from a backup file">Restore backup</button>
       <input type="file" id="importFile" accept="application/json,.json" hidden>
@@ -24,7 +25,7 @@
     <section class="panel">
       <h2>Members</h2>
       <div class="toolbar">
-        <input type="search" id="search" placeholder="Search name, email, major…">
+        <input type="search" id="search" placeholder="Search members…">
         <select id="filterRole"><option value="">All roles</option></select>
         <select id="filterStatus">
           <option value="">All statuses</option>
@@ -37,15 +38,7 @@
       <div class="table-wrap">
         <table>
           <thead>
-            <tr>
-              <th data-sort="name">Name</th>
-              <th data-sort="role">Role</th>
-              <th data-sort="major">Major</th>
-              <th data-sort="year">Year</th>
-              <th data-sort="status">Status</th>
-              <th data-sort="joinDate">Joined</th>
-              <th></th>
-            </tr>
+            <tr id="headRow"></tr>
           </thead>
           <tbody id="rows"></tbody>
         </table>
@@ -94,6 +87,7 @@
         <label class="full">Notes
           <textarea name="notes" rows="2"></textarea>
         </label>
+        <div class="full grid" id="customFields" hidden></div>
       </div>
       <div class="dialog-actions">
         <button type="button" id="cancelBtn">Cancel</button>
@@ -102,23 +96,92 @@
     </form>
   </dialog>
 
+  <dialog id="columnsDialog">
+    <div class="dialog-body">
+      <h2>Manage columns</h2>
+      <h3>Standard columns</h3>
+      <p class="hint">Choose which standard columns appear in the table.</p>
+      <div class="check-list" id="builtInList"></div>
+      <h3>Custom columns</h3>
+      <p class="hint">Track anything else your organization needs, like dues paid, T-shirt size, or committee.</p>
+      <ul class="column-list" id="customList"></ul>
+      <button type="button" id="newColumnBtn">+ New column</button>
+      <div class="dialog-actions">
+        <button type="button" class="primary" id="columnsDone">Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="fieldDialog">
+    <form method="dialog" id="fieldForm">
+      <h2 id="fieldDialogTitle">New column</h2>
+      <div class="grid">
+        <label class="full">Column name
+          <input name="columnName" maxlength="40" placeholder="e.g. Dues paid">
+        </label>
+        <label class="full">Type
+          <select name="columnType"></select>
+        </label>
+        <label class="full" id="choicesWrap">Dropdown choices (one per line)
+          <textarea name="choices" rows="4" placeholder="Small&#10;Medium&#10;Large"></textarea>
+        </label>
+        <label class="check full" id="requiredWrap">
+          <input type="checkbox" name="isRequired"> Required when adding or editing a member
+        </label>
+        <label class="check full">
+          <input type="checkbox" name="showInTable" checked> Show in table
+        </label>
+      </div>
+      <div class="error" id="fieldError"></div>
+      <div class="dialog-actions">
+        <button type="button" id="fieldCancel">Cancel</button>
+        <button type="submit" class="primary">Save column</button>
+      </div>
+    </form>
+  </dialog>
+
   <script>
     const STORAGE_KEY = 'roster-app:members';
+    const COLUMNS_KEY = 'roster-app:columns';
     const ROLES = ['President', 'Vice President', 'Treasurer', 'Secretary', 'Officer', 'Member'];
 
+    const FIELD_TYPES = {
+      text: 'Text',
+      number: 'Number',
+      date: 'Date',
+      select: 'Dropdown',
+      checkbox: 'Yes / No',
+      link: 'Link',
+    };
+
+    const BUILT_INS = [
+      { key: 'name', label: 'Name', locked: true, cell: (m) => `<strong>${escapeHtml(m.name)}</strong><br><small class="member-email">${escapeHtml(m.email)}</small>` },
+      { key: 'role', label: 'Role' },
+      { key: 'major', label: 'Major' },
+      { key: 'year', label: 'Year' },
+      { key: 'status', label: 'Status', cell: (m) => `<span class="badge ${escapeHtml(m.status)}">${escapeHtml(m.status)}</span>` },
+      { key: 'phone', label: 'Phone' },
+      { key: 'joinDate', label: 'Joined' },
+    ];
+
     const SAMPLE = [
-      { id: uid(), name: 'Ava Thompson', email: 'ava.t@university.edu', role: 'President', major: 'Computer Science', year: 'Senior', status: 'active', phone: '', joinDate: '2023-09-05', notes: '' },
-      { id: uid(), name: 'Marcus Lee', email: 'mlee@university.edu', role: 'Treasurer', major: 'Finance', year: 'Junior', status: 'active', phone: '', joinDate: '2024-01-18', notes: 'Handles club budget' },
-      { id: uid(), name: 'Priya Shah', email: 'pshah@university.edu', role: 'Member', major: 'Biology', year: 'Sophomore', status: 'inactive', phone: '', joinDate: '2024-09-10', notes: '' },
+      { id: uid(), name: 'Ava Thompson', email: 'ava.t@university.edu', role: 'President', major: 'Computer Science', year: 'Senior', status: 'active', phone: '', joinDate: '2023-09-05', notes: '', custom: {} },
+      { id: uid(), name: 'Marcus Lee', email: 'mlee@university.edu', role: 'Treasurer', major: 'Finance', year: 'Junior', status: 'active', phone: '', joinDate: '2024-01-18', notes: 'Handles club budget', custom: {} },
+      { id: uid(), name: 'Priya Shah', email: 'pshah@university.edu', role: 'Member', major: 'Biology', year: 'Sophomore', status: 'inactive', phone: '', joinDate: '2024-09-10', notes: '', custom: {} },
     ];
 
     let members = load();
+    let columns = loadColumns();
     let editingId = null;
+    let editingFieldId = null;
     let sort = { key: 'name', dir: 1 };
 
     const $ = (sel) => document.querySelector(sel);
     const dialog = $('#memberDialog');
     const form = $('#memberForm');
+    const columnsDialog = $('#columnsDialog');
+    const fieldDialog = $('#fieldDialog');
+    const fieldForm = $('#fieldForm');
 
     function uid() {
       return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -132,8 +195,36 @@
       return SAMPLE;
     }
 
+    function loadColumns() {
+      try {
+        const raw = localStorage.getItem(COLUMNS_KEY);
+        if (raw) return normalizeColumns(JSON.parse(raw));
+      } catch {}
+      return { custom: [], hidden: ['phone'] };
+    }
+
+    // Column settings: custom fields the org defined, plus which standard columns are hidden
+    function normalizeColumns(c) {
+      return {
+        custom: (Array.isArray(c?.custom) ? c.custom : [])
+          .filter((f) => f && f.id && f.label)
+          .map((f) => ({
+            id: String(f.id),
+            label: String(f.label),
+            type: FIELD_TYPES[f.type] ? f.type : 'text',
+            options: Array.isArray(f.options) ? f.options.map(String) : [],
+            required: !!f.required,
+            showInTable: f.showInTable !== false,
+          })),
+        hidden: Array.isArray(c?.hidden) ? c.hidden.filter((k) => k !== 'name') : [],
+      };
+    }
+
     function save() {
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(members)); } catch {}
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(members));
+        localStorage.setItem(COLUMNS_KEY, JSON.stringify(columns));
+      } catch {}
       render();
     }
 
@@ -141,32 +232,78 @@
       return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
+    const isEmpty = (v) => v === undefined || v === null || v === '';
+
+    // ---------- Columns ----------
+    function visibleColumns() {
+      return [
+        ...BUILT_INS.filter((c) => !columns.hidden.includes(c.key)),
+        ...columns.custom.filter((f) => f.showInTable).map((f) => ({ key: `custom:${f.id}`, label: f.label, field: f })),
+      ];
+    }
+
+    function rawValue(m, key) {
+      return key.startsWith('custom:') ? m.custom?.[key.slice(7)] : m[key];
+    }
+
+    function formatCustom(field, v) {
+      if (isEmpty(v)) return '—';
+      if (field.type === 'checkbox') return v ? 'Yes' : 'No';
+      if (field.type === 'link') {
+        const href = /^https?:\/\//i.test(v) ? v : `https://${v}`;
+        return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(v)}</a>`;
+      }
+      return escapeHtml(v);
+    }
+
+    function cell(m, col) {
+      if (col.cell) return col.cell(m);
+      if (col.field) return formatCustom(col.field, rawValue(m, col.key));
+      return escapeHtml(m[col.key] || '—');
+    }
+
     // ---------- Read ----------
+    function compare(a, b) {
+      const x = rawValue(a, sort.key);
+      const y = rawValue(b, sort.key);
+      if (isEmpty(x) || isEmpty(y)) return isEmpty(x) - isEmpty(y); // blanks always last
+      if (typeof x === 'number' && typeof y === 'number') return (x - y) * sort.dir;
+      return String(x).localeCompare(String(y), undefined, { numeric: true }) * sort.dir;
+    }
+
     function filtered() {
       const q = $('#search').value.trim().toLowerCase();
       const role = $('#filterRole').value;
       const status = $('#filterStatus').value;
+      const searchText = (m) =>
+        [m.name, m.email, m.major, m.role, m.phone, m.notes, ...Object.values(m.custom ?? {}).filter((v) => typeof v !== 'boolean')]
+          .join(' ')
+          .toLowerCase();
       return members
         .filter((m) => !role || m.role === role)
         .filter((m) => !status || m.status === status)
-        .filter((m) => !q || [m.name, m.email, m.major, m.role, m.notes].join(' ').toLowerCase().includes(q))
-        .sort((a, b) => String(a[sort.key] ?? '').localeCompare(String(b[sort.key] ?? '')) * sort.dir);
+        .filter((m) => !q || searchText(m).includes(q))
+        .sort(compare);
     }
 
     function render() {
+      const cols = visibleColumns();
+      if (!cols.some((c) => c.key === sort.key)) sort = { key: 'name', dir: 1 };
+
+      $('#headRow').innerHTML =
+        cols.map((c) => {
+          const arrow = c.key === sort.key ? (sort.dir === 1 ? ' ▲' : ' ▼') : '';
+          return `<th data-sort="${escapeHtml(c.key)}">${escapeHtml(c.label)}${arrow}</th>`;
+        }).join('') + '<th></th>';
+
       const list = filtered();
       const tbody = $('#rows');
       if (!list.length) {
-        tbody.innerHTML = `<tr><td colspan="7" class="empty">${members.length ? 'No members match your filters.' : 'No members yet. Click “Add member” to get started.'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${cols.length + 1}" class="empty">${members.length ? 'No members match your filters.' : 'No members yet. Click “Add member” to get started.'}</td></tr>`;
       } else {
         tbody.innerHTML = list.map((m) => `
-          <tr data-id="${m.id}">
-            <td><strong>${escapeHtml(m.name)}</strong><br><small class="member-email">${escapeHtml(m.email)}</small></td>
-            <td>${escapeHtml(m.role)}</td>
-            <td>${escapeHtml(m.major || '—')}</td>
-            <td>${escapeHtml(m.year || '—')}</td>
-            <td><span class="badge ${escapeHtml(m.status)}">${escapeHtml(m.status)}</span></td>
-            <td>${escapeHtml(m.joinDate || '—')}</td>
+          <tr data-id="${escapeHtml(m.id)}">
+            ${cols.map((c) => `<td>${cell(m, c)}</td>`).join('')}
             <td class="actions">
               <button class="small" data-action="edit">Edit</button>
               <button class="small danger" data-action="delete">Delete</button>
@@ -181,14 +318,35 @@
         <span>Inactive <b>${count('inactive')}</b></span>
         <span>Alumni <b>${count('alumni')}</b></span>
         <span>Showing <b>${list.length}</b></span>`;
-
-      document.querySelectorAll('th[data-sort]').forEach((th) => {
-        const arrow = th.dataset.sort === sort.key ? (sort.dir === 1 ? ' ▲' : ' ▼') : '';
-        th.textContent = th.textContent.replace(/ [▲▼]$/, '') + arrow;
-      });
     }
 
     // ---------- Create / Update ----------
+    function renderCustomInputs(member) {
+      const wrap = $('#customFields');
+      wrap.hidden = !columns.custom.length;
+      wrap.innerHTML = columns.custom.map((f) => {
+        const name = `custom:${escapeHtml(f.id)}`;
+        const v = member?.custom?.[f.id];
+        const req = f.required ? ' required' : '';
+        const label = escapeHtml(f.label) + (f.required ? ' *' : '');
+        if (f.type === 'checkbox') {
+          return `<label class="check"><input type="checkbox" name="${name}"${v ? ' checked' : ''}> ${escapeHtml(f.label)}</label>`;
+        }
+        if (f.type === 'select') {
+          // Keep a value that was removed from the choices so editing doesn't silently erase it
+          const opts = isEmpty(v) || f.options.includes(v) ? f.options : [...f.options, v];
+          const options = opts.map((o) => `<option${o === v ? ' selected' : ''}>${escapeHtml(o)}</option>`).join('');
+          return `<label>${label}<select name="${name}"${req}><option value="">—</option>${options}</select></label>`;
+        }
+        const attrs = {
+          number: 'type="number" step="any"',
+          date: 'type="date"',
+          link: 'type="text" placeholder="https://…"',
+        }[f.type] ?? 'type="text"';
+        return `<label>${label}<input ${attrs} name="${name}" value="${escapeHtml(v ?? '')}"${req}></label>`;
+      }).join('');
+    }
+
     function openForm(member) {
       editingId = member?.id ?? null;
       $('#dialogTitle').textContent = member ? 'Edit member' : 'Add member';
@@ -197,16 +355,29 @@
       for (const el of form.elements) {
         if (el.name && data[el.name] !== undefined) el.value = data[el.name];
       }
+      renderCustomInputs(member);
       dialog.showModal();
     }
 
     form.addEventListener('submit', () => {
-      const data = Object.fromEntries(new FormData(form));
-      Object.keys(data).forEach((k) => (data[k] = data[k].trim()));
+      const data = {};
+      const custom = {};
+      for (const el of form.elements) {
+        if (!el.name) continue;
+        if (!el.name.startsWith('custom:')) {
+          data[el.name] = el.value.trim();
+          continue;
+        }
+        const field = columns.custom.find((f) => f.id === el.name.slice(7));
+        if (!field) continue;
+        if (field.type === 'checkbox') custom[field.id] = el.checked;
+        else if (field.type === 'number') custom[field.id] = el.value === '' ? '' : Number(el.value);
+        else custom[field.id] = el.value.trim();
+      }
       if (editingId) {
-        members = members.map((m) => (m.id === editingId ? { ...m, ...data } : m));
+        members = members.map((m) => (m.id === editingId ? { ...m, ...data, custom: { ...m.custom, ...custom } } : m));
       } else {
-        members.push({ id: uid(), ...data });
+        members.push({ id: uid(), ...data, custom });
       }
       save();
     });
@@ -219,17 +390,139 @@
       save();
     }
 
+    // ---------- Manage columns ----------
+    function renderColumnManager() {
+      $('#builtInList').innerHTML = BUILT_INS.map((c) => `
+        <label class="check">
+          <input type="checkbox" data-builtin="${c.key}"${columns.hidden.includes(c.key) ? '' : ' checked'}${c.locked ? ' disabled' : ''}>
+          ${c.label}
+        </label>`).join('');
+
+      const last = columns.custom.length - 1;
+      $('#customList').innerHTML = columns.custom.length
+        ? columns.custom.map((f, i) => `
+          <li data-id="${escapeHtml(f.id)}">
+            <div>
+              <strong>${escapeHtml(f.label)}</strong>
+              <small>${FIELD_TYPES[f.type]}${f.required ? ' · required' : ''}${f.showInTable ? '' : ' · hidden from table'}</small>
+            </div>
+            <div class="column-actions">
+              <button class="small" data-action="up" aria-label="Move up"${i === 0 ? ' disabled' : ''}>↑</button>
+              <button class="small" data-action="down" aria-label="Move down"${i === last ? ' disabled' : ''}>↓</button>
+              <button class="small" data-action="edit">Edit</button>
+              <button class="small danger" data-action="delete">Delete</button>
+            </div>
+          </li>`).join('')
+        : '<li class="empty">No custom columns yet.</li>';
+    }
+
+    function openFieldForm(field) {
+      editingFieldId = field?.id ?? null;
+      fieldForm.reset();
+      $('#fieldDialogTitle').textContent = field ? 'Edit column' : 'New column';
+      $('#fieldError').textContent = '';
+      const els = fieldForm.elements;
+      els.columnName.value = field?.label ?? '';
+      els.columnType.value = field?.type ?? 'text';
+      els.choices.value = field?.options.join('\n') ?? '';
+      els.isRequired.checked = field?.required ?? false;
+      els.showInTable.checked = field?.showInTable ?? true;
+      syncFieldType();
+      fieldDialog.showModal();
+      els.columnName.focus();
+    }
+
+    function syncFieldType() {
+      const type = fieldForm.elements.columnType.value;
+      $('#choicesWrap').hidden = type !== 'select';
+      $('#requiredWrap').hidden = type === 'checkbox';
+    }
+
+    fieldForm.addEventListener('submit', (e) => {
+      const els = fieldForm.elements;
+      const label = els.columnName.value.trim();
+      const type = els.columnType.value;
+      const options = [...new Set(els.choices.value.split('\n').map((s) => s.trim()).filter(Boolean))];
+      const taken = [
+        ...BUILT_INS.map((c) => c.label), 'Email', 'Notes',
+        ...columns.custom.filter((f) => f.id !== editingFieldId).map((f) => f.label),
+      ];
+
+      let error = '';
+      if (!label) error = 'Give the column a name.';
+      else if (taken.some((t) => t.toLowerCase() === label.toLowerCase())) error = `There's already a column called “${label}”.`;
+      else if (type === 'select' && !options.length) error = 'Add at least one dropdown choice.';
+      if (error) {
+        e.preventDefault();
+        $('#fieldError').textContent = error;
+        return;
+      }
+
+      const field = {
+        id: editingFieldId ?? uid(),
+        label,
+        type,
+        options: type === 'select' ? options : [],
+        required: type !== 'checkbox' && els.isRequired.checked,
+        showInTable: els.showInTable.checked,
+      };
+      columns.custom = editingFieldId
+        ? columns.custom.map((f) => (f.id === editingFieldId ? field : f))
+        : [...columns.custom, field];
+      save();
+      renderColumnManager();
+    });
+
+    $('#builtInList').addEventListener('change', (e) => {
+      const key = e.target.dataset.builtin;
+      if (!key) return;
+      columns.hidden = e.target.checked ? columns.hidden.filter((k) => k !== key) : [...columns.hidden, key];
+      save();
+    });
+
+    $('#customList').addEventListener('click', (e) => {
+      const action = e.target.dataset.action;
+      const id = e.target.closest('li[data-id]')?.dataset.id;
+      const i = columns.custom.findIndex((f) => f.id === id);
+      if (!action || i < 0) return;
+      const field = columns.custom[i];
+
+      if (action === 'edit') return openFieldForm(field);
+      if (action === 'up' || action === 'down') {
+        const j = action === 'up' ? i - 1 : i + 1;
+        [columns.custom[i], columns.custom[j]] = [columns.custom[j], columns.custom[i]];
+      }
+      if (action === 'delete') {
+        if (!confirm(`Delete the “${field.label}” column? This also erases its values for every member.`)) return;
+        columns.custom.splice(i, 1);
+        members = members.map((m) => {
+          const { [id]: _, ...rest } = m.custom ?? {};
+          return { ...m, custom: rest };
+        });
+      }
+      save();
+      renderColumnManager();
+    });
+
     // ---------- Backup / Restore ----------
     function validate(data) {
       if (!Array.isArray(data)) throw new Error('This file is not a roster backup.');
       return data.map((m, i) => {
         if (typeof m !== 'object' || m === null || !m.name) throw new Error(`Entry ${i + 1} is missing a member name.`);
-        return { id: m.id || uid(), role: 'Member', status: 'active', ...m };
+        const custom = m.custom && typeof m.custom === 'object' ? m.custom : {};
+        return { id: m.id || uid(), role: 'Member', status: 'active', ...m, custom };
       });
     }
 
+    // Older backups were a plain list of members; newer ones also carry column settings
+    function parseBackup(data) {
+      if (Array.isArray(data)) return { members: validate(data), columns: null };
+      return { members: validate(data?.members), columns: data.columns ? normalizeColumns(data.columns) : null };
+    }
+
     $('#exportBtn').addEventListener('click', () => {
-      const blob = new Blob([JSON.stringify(members, null, 2)], { type: 'application/json' });
+      const backup = { app: 'roster-tracker', version: 2, columns, members };
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `roster-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -242,9 +535,11 @@
       const file = e.target.files[0];
       if (!file) return;
       try {
-        const restored = validate(JSON.parse(await file.text()));
-        if (!confirm(`Replace the current roster with ${restored.length} member(s) from this backup?`)) return;
-        members = restored;
+        const restored = parseBackup(JSON.parse(await file.text()));
+        const extra = restored.columns ? ' and its column settings' : '';
+        if (!confirm(`Replace the current roster with ${restored.members.length} member(s)${extra} from this backup?`)) return;
+        members = restored.members;
+        if (restored.columns) columns = restored.columns;
         save();
       } catch (err) {
         alert(`Couldn't restore backup: ${err instanceof SyntaxError ? 'the file is not a valid backup.' : err.message}`);
@@ -256,10 +551,20 @@
     // ---------- Wiring ----------
     $('#filterRole').innerHTML += ROLES.map((r) => `<option>${r}</option>`).join('');
     form.elements.role.innerHTML = ROLES.map((r) => `<option>${r}</option>`).join('');
+    fieldForm.elements.columnType.innerHTML = Object.entries(FIELD_TYPES).map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
 
     $('#addBtn').addEventListener('click', () => openForm());
     $('#cancelBtn').addEventListener('click', () => dialog.close());
     ['#search', '#filterRole', '#filterStatus'].forEach((s) => $(s).addEventListener('input', render));
+
+    $('#columnsBtn').addEventListener('click', () => {
+      renderColumnManager();
+      columnsDialog.showModal();
+    });
+    $('#columnsDone').addEventListener('click', () => columnsDialog.close());
+    $('#newColumnBtn').addEventListener('click', () => openFieldForm());
+    $('#fieldCancel').addEventListener('click', () => fieldDialog.close());
+    fieldForm.elements.columnType.addEventListener('change', syncFieldType);
 
     $('#rows').addEventListener('click', (e) => {
       const row = e.target.closest('tr[data-id]');
@@ -270,12 +575,12 @@
       if (action === 'delete') remove(id);
     });
 
-    document.querySelectorAll('th[data-sort]').forEach((th) =>
-      th.addEventListener('click', () => {
-        sort = { key: th.dataset.sort, dir: sort.key === th.dataset.sort ? -sort.dir : 1 };
-        render();
-      })
-    );
+    $('#headRow').addEventListener('click', (e) => {
+      const key = e.target.closest('th[data-sort]')?.dataset.sort;
+      if (!key) return;
+      sort = { key, dir: sort.key === key ? -sort.dir : 1 };
+      render();
+    });
 
     render();
   </script>
