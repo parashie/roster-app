@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Roster Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Roster Tracker</h1>
+      <p>Manage your student organization's members.</p>
+    </div>
+    <div class="toolbar header-actions">
+      <button class="primary" id="addBtn">+ Add member</button>
+      <button id="exportBtn" title="Download a backup file of the roster">Download backup</button>
+      <button id="importBtn" title="Load a roster from a backup file">Restore backup</button>
+      <input type="file" id="importFile" accept="application/json,.json" hidden>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Members</h2>
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Search name, email, major…">
+        <select id="filterRole"><option value="">All roles</option></select>
+        <select id="filterStatus">
+          <option value="">All statuses</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+          <option value="alumni">Alumni</option>
+        </select>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-sort="name">Name</th>
+              <th data-sort="role">Role</th>
+              <th data-sort="major">Major</th>
+              <th data-sort="year">Year</th>
+              <th data-sort="status">Status</th>
+              <th data-sort="joinDate">Joined</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="memberDialog">
+    <form method="dialog" id="memberForm">
+      <h2 id="dialogTitle">Add member</h2>
+      <div class="grid">
+        <label class="full">Full name
+          <input name="name" required>
+        </label>
+        <label class="full">Email
+          <input name="email" type="email" required>
+        </label>
+        <label>Role
+          <select name="role"></select>
+        </label>
+        <label>Status
+          <select name="status">
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="alumni">Alumni</option>
+          </select>
+        </label>
+        <label>Major
+          <input name="major">
+        </label>
+        <label>Year
+          <select name="year">
+            <option>Freshman</option>
+            <option>Sophomore</option>
+            <option>Junior</option>
+            <option>Senior</option>
+            <option>Graduate</option>
+          </select>
+        </label>
+        <label>Phone
+          <input name="phone" type="tel">
+        </label>
+        <label>Join date
+          <input name="joinDate" type="date">
+        </label>
+        <label class="full">Notes
+          <textarea name="notes" rows="2"></textarea>
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" id="cancelBtn">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    const STORAGE_KEY = 'roster-app:members';
+    const ROLES = ['President', 'Vice President', 'Treasurer', 'Secretary', 'Officer', 'Member'];
+
+    const SAMPLE = [
+      { id: uid(), name: 'Ava Thompson', email: 'ava.t@university.edu', role: 'President', major: 'Computer Science', year: 'Senior', status: 'active', phone: '', joinDate: '2023-09-05', notes: '' },
+      { id: uid(), name: 'Marcus Lee', email: 'mlee@university.edu', role: 'Treasurer', major: 'Finance', year: 'Junior', status: 'active', phone: '', joinDate: '2024-01-18', notes: 'Handles club budget' },
+      { id: uid(), name: 'Priya Shah', email: 'pshah@university.edu', role: 'Member', major: 'Biology', year: 'Sophomore', status: 'inactive', phone: '', joinDate: '2024-09-10', notes: '' },
+    ];
+
+    let members = load();
+    let editingId = null;
+    let sort = { key: 'name', dir: 1 };
+
+    const $ = (sel) => document.querySelector(sel);
+    const dialog = $('#memberDialog');
+    const form = $('#memberForm');
+
+    function uid() {
+      return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
+    }
+
+    function load() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) return JSON.parse(raw);
+      } catch {}
+      return SAMPLE;
+    }
+
+    function save() {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(members)); } catch {}
+      render();
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // ---------- Read ----------
+    function filtered() {
+      const q = $('#search').value.trim().toLowerCase();
+      const role = $('#filterRole').value;
+      const status = $('#filterStatus').value;
+      return members
+        .filter((m) => !role || m.role === role)
+        .filter((m) => !status || m.status === status)
+        .filter((m) => !q || [m.name, m.email, m.major, m.role, m.notes].join(' ').toLowerCase().includes(q))
+        .sort((a, b) => String(a[sort.key] ?? '').localeCompare(String(b[sort.key] ?? '')) * sort.dir);
+    }
+
+    function render() {
+      const list = filtered();
+      const tbody = $('#rows');
+      if (!list.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="empty">${members.length ? 'No members match your filters.' : 'No members yet. Click “Add member” to get started.'}</td></tr>`;
+      } else {
+        tbody.innerHTML = list.map((m) => `
+          <tr data-id="${m.id}">
+            <td><strong>${escapeHtml(m.name)}</strong><br><small class="member-email">${escapeHtml(m.email)}</small></td>
+            <td>${escapeHtml(m.role)}</td>
+            <td>${escapeHtml(m.major || '—')}</td>
+            <td>${escapeHtml(m.year || '—')}</td>
+            <td><span class="badge ${escapeHtml(m.status)}">${escapeHtml(m.status)}</span></td>
+            <td>${escapeHtml(m.joinDate || '—')}</td>
+            <td class="actions">
+              <button class="small" data-action="edit">Edit</button>
+              <button class="small danger" data-action="delete">Delete</button>
+            </td>
+          </tr>`).join('');
+      }
+
+      const count = (s) => members.filter((m) => m.status === s).length;
+      $('#stats').innerHTML = `
+        <span>Total <b>${members.length}</b></span>
+        <span>Active <b>${count('active')}</b></span>
+        <span>Inactive <b>${count('inactive')}</b></span>
+        <span>Alumni <b>${count('alumni')}</b></span>
+        <span>Showing <b>${list.length}</b></span>`;
+
+      document.querySelectorAll('th[data-sort]').forEach((th) => {
+        const arrow = th.dataset.sort === sort.key ? (sort.dir === 1 ? ' ▲' : ' ▼') : '';
+        th.textContent = th.textContent.replace(/ [▲▼]$/, '') + arrow;
+      });
+    }
+
+    // ---------- Create / Update ----------
+    function openForm(member) {
+      editingId = member?.id ?? null;
+      $('#dialogTitle').textContent = member ? 'Edit member' : 'Add member';
+      form.reset();
+      const data = member ?? { role: 'Member', status: 'active', year: 'Freshman', joinDate: new Date().toISOString().slice(0, 10) };
+      for (const el of form.elements) {
+        if (el.name && data[el.name] !== undefined) el.value = data[el.name];
+      }
+      dialog.showModal();
+    }
+
+    form.addEventListener('submit', () => {
+      const data = Object.fromEntries(new FormData(form));
+      Object.keys(data).forEach((k) => (data[k] = data[k].trim()));
+      if (editingId) {
+        members = members.map((m) => (m.id === editingId ? { ...m, ...data } : m));
+      } else {
+        members.push({ id: uid(), ...data });
+      }
+      save();
+    });
+
+    // ---------- Delete ----------
+    function remove(id) {
+      const m = members.find((x) => x.id === id);
+      if (!m || !confirm(`Remove ${m.name} from the roster?`)) return;
+      members = members.filter((x) => x.id !== id);
+      save();
+    }
+
+    // ---------- Backup / Restore ----------
+    function validate(data) {
+      if (!Array.isArray(data)) throw new Error('This file is not a roster backup.');
+      return data.map((m, i) => {
+        if (typeof m !== 'object' || m === null || !m.name) throw new Error(`Entry ${i + 1} is missing a member name.`);
+        return { id: m.id || uid(), role: 'Member', status: 'active', ...m };
+      });
+    }
+
+    $('#exportBtn').addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(members, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `roster-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    $('#importBtn').addEventListener('click', () => $('#importFile').click());
+    $('#importFile').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const restored = validate(JSON.parse(await file.text()));
+        if (!confirm(`Replace the current roster with ${restored.length} member(s) from this backup?`)) return;
+        members = restored;
+        save();
+      } catch (err) {
+        alert(`Couldn't restore backup: ${err instanceof SyntaxError ? 'the file is not a valid backup.' : err.message}`);
+      } finally {
+        e.target.value = '';
+      }
+    });
+
+    // ---------- Wiring ----------
+    $('#filterRole').innerHTML += ROLES.map((r) => `<option>${r}</option>`).join('');
+    form.elements.role.innerHTML = ROLES.map((r) => `<option>${r}</option>`).join('');
+
+    $('#addBtn').addEventListener('click', () => openForm());
+    $('#cancelBtn').addEventListener('click', () => dialog.close());
+    ['#search', '#filterRole', '#filterStatus'].forEach((s) => $(s).addEventListener('input', render));
+
+    $('#rows').addEventListener('click', (e) => {
+      const row = e.target.closest('tr[data-id]');
+      if (!row) return;
+      const id = row.dataset.id;
+      const action = e.target.dataset.action;
+      if (action === 'edit') openForm(members.find((m) => m.id === id));
+      if (action === 'delete') remove(id);
+    });
+
+    document.querySelectorAll('th[data-sort]').forEach((th) =>
+      th.addEventListener('click', () => {
+        sort = { key: th.dataset.sort, dir: sort.key === th.dataset.sort ? -sort.dir : 1 };
+        render();
+      })
+    );
+
+    render();
+  </script>
+</body>
+</html>
