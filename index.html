@@ -32,9 +32,15 @@
           <h2>Members</h2>
           <div class="toolbar">
             <button class="primary" id="addBtn">+ Add member</button>
+            <button id="importMembersBtn" title="Import from CSV, Excel, or Google Sheets">Import members</button>
             <button id="rolesBtn" title="Add, rename, or remove roles">Manage roles</button>
             <button id="columnsBtn" title="Add, edit, or hide columns">Manage columns</button>
           </div>
+        </div>
+        <div class="banner" id="importBanner" hidden>
+          <span id="importBannerText"></span>
+          <button class="small" id="undoImport">Undo import</button>
+          <button class="small" id="dismissBanner" aria-label="Dismiss">✕</button>
         </div>
         <div class="toolbar">
           <input type="search" id="search" placeholder="Search members…">
@@ -277,6 +283,68 @@
     </form>
   </dialog>
 
+  <dialog id="importDialog" class="wide">
+    <div class="dialog-body">
+      <h2>Import members</h2>
+
+      <section id="importStep1">
+        <p class="hint">Bring in members from a spreadsheet. The first row should contain column headers like “Name” and “Email”.</p>
+        <h3>From a file</h3>
+        <p class="hint">CSV, Excel (.xlsx, .xls), or OpenDocument (.ods).</p>
+        <button type="button" id="importChooseFile">Choose file…</button>
+        <input type="file" id="importSheetFile" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods,text/csv" hidden>
+
+        <h3>From Google Sheets</h3>
+        <p class="hint">
+          In Google Sheets, choose <b>File → Share → Publish to web</b>, pick the tab and
+          <b>Comma-separated values (.csv)</b>, then paste the link here.
+          Or choose <b>File → Download → CSV</b> and upload that file above.
+        </p>
+        <form class="inline-form" id="googleForm">
+          <input name="url" placeholder="https://docs.google.com/spreadsheets/…" aria-label="Google Sheets link">
+          <button type="submit" id="googleLoadBtn">Load sheet</button>
+        </form>
+        <p class="hint warn">Publishing lets anyone with the link view the sheet. You can stop publishing once the import is done.</p>
+        <div class="error" id="importError"></div>
+        <div class="dialog-actions">
+          <button type="button" data-close-import>Cancel</button>
+        </div>
+      </section>
+
+      <section id="importStep2" hidden>
+        <p class="hint" id="importSource"></p>
+        <label id="sheetPickWrap">Sheet tab
+          <select id="sheetPick"></select>
+        </label>
+
+        <h3>Match columns</h3>
+        <p class="hint">Choose where each spreadsheet column should go. We've guessed where we could.</p>
+        <div class="map-list" id="mapList"></div>
+
+        <h3>Members already on the roster (matched by email)</h3>
+        <div class="radio-list" id="dupModes">
+          <label class="check"><input type="radio" name="dupMode" value="update" checked> Update them with the spreadsheet's info</label>
+          <label class="check"><input type="radio" name="dupMode" value="skip"> Leave them as they are</label>
+          <label class="check"><input type="radio" name="dupMode" value="add"> Add them again as new members</label>
+        </div>
+
+        <h3>Preview</h3>
+        <div class="stats" id="importCounts"></div>
+        <div class="table-wrap">
+          <table class="preview" id="previewTable"></table>
+        </div>
+        <div class="error" id="mapError"></div>
+        <div class="dialog-actions">
+          <button type="button" id="importBack">Back</button>
+          <button type="button" data-close-import>Cancel</button>
+          <button type="button" class="primary" id="runImport">Import</button>
+        </div>
+      </section>
+    </div>
+  </dialog>
+
+  <!-- Spreadsheet reader for CSV / Excel imports (loaded from SheetJS's official CDN) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script>
     const STORAGE_KEY = 'roster-app:members';
     const COLUMNS_KEY = 'roster-app:columns';
@@ -406,6 +474,7 @@
     }
 
     function save() {
+      clearImportUndo(); // any later change makes "Undo import" unsafe
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(members));
         localStorage.setItem(COLUMNS_KEY, JSON.stringify(columns));
@@ -1049,6 +1118,440 @@
       save();
     });
 
+    // ---------- Import from spreadsheet ----------
+    const IMPORT_FIELDS = {
+      name: 'Full name',
+      firstName: 'First name',
+      lastName: 'Last name',
+      email: 'Email',
+      role: 'Role',
+      status: 'Status',
+      major: 'Major',
+      year: 'Year',
+      phone: 'Phone',
+      joinDate: 'Join date',
+      notes: 'Notes',
+    };
+
+    // Common spreadsheet headers for each roster field, used to guess the column matching
+    const IMPORT_ALIASES = {
+      name: ['name', 'full name', 'student', 'student name', 'member', 'member name'],
+      firstName: ['first name', 'first', 'firstname', 'given name', 'preferred name'],
+      lastName: ['last name', 'last', 'lastname', 'surname', 'family name'],
+      email: ['email', 'e-mail', 'email address', 'school email', 'student email', 'university email'],
+      role: ['role', 'position', 'title', 'officer role'],
+      status: ['status', 'member status', 'membership status'],
+      major: ['major', 'program', 'field of study', 'degree'],
+      year: ['year', 'class', 'class year', 'class standing', 'grade', 'academic year'],
+      phone: ['phone', 'phone number', 'mobile', 'cell', 'cell phone', 'telephone'],
+      joinDate: ['join date', 'joined', 'date joined', 'member since', 'start date'],
+      notes: ['notes', 'note', 'comments', 'comment'],
+    };
+
+    const YES = /^(y|yes|true|x|✓|✔)$/i;
+    const NO = /^(n|no|false)$/i;
+    const YEARS = [
+      ['Freshman', /fresh|first|^1(st)?\b/],
+      ['Sophomore', /soph|second|^2(nd)?\b/],
+      ['Junior', /junior|third|^3(rd)?\b/],
+      ['Senior', /senior|fourth|^4(th)?\b/],
+      ['Graduate', /grad|master|phd|doctor/],
+    ];
+    const ACTION_LABELS = { add: 'New', update: 'Update', skip: 'Skip' };
+    const GOOGLE_HELP = 'Couldn’t read that sheet. Make sure it’s published to the web as CSV (File → Share → Publish to web), or download it as a CSV and choose the file instead.';
+
+    const importDialog = $('#importDialog');
+    let importState = null;
+    let importUndo = null;
+
+    const normalizeHeader = (h) => String(h).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const parseNumber = (v) => (/^0\d/.test(v) ? NaN : Number(v.replace(/[$,\s]/g, '')));
+    const dupMode = () => importDialog.querySelector('input[name="dupMode"]:checked').value;
+
+    function toISODate(v) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+      const us = v.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/); // month/day/year
+      const d = us ? new Date(Number(us[3].length === 2 ? `20${us[3]}` : us[3]), us[1] - 1, Number(us[2])) : new Date(v);
+      return isNaN(d) ? '' : d.toLocaleDateString('en-CA');
+    }
+
+    function normalizeStatus(v) {
+      const s = v.toLowerCase();
+      if (/alum|graduated/.test(s)) return 'alumni';
+      if (/inactive|former|past|left|^no$/.test(s)) return 'inactive';
+      return 'active';
+    }
+
+    function inferType(values) {
+      const filled = values.filter(Boolean);
+      if (!filled.length) return 'text';
+      if (filled.every((v) => YES.test(v) || NO.test(v))) return 'checkbox';
+      if (filled.every((v) => !isNaN(parseNumber(v)))) return 'number';
+      if (filled.every((v) => /^\d{4}-\d{2}-\d{2}$/.test(v))) return 'date';
+      return 'text';
+    }
+
+    function guessTarget(header, used) {
+      const h = normalizeHeader(header);
+      const builtIn = Object.keys(IMPORT_ALIASES).find((k) => IMPORT_ALIASES[k].some((a) => normalizeHeader(a) === h));
+      const custom = columns.custom.find((f) => normalizeHeader(f.label) === h);
+      const target = builtIn ?? (custom ? `custom:${custom.id}` : 'skip');
+      if (target === 'skip' || used.has(target)) return 'skip';
+      used.add(target);
+      return target;
+    }
+
+    function targetLabel(target) {
+      return IMPORT_FIELDS[target] ?? columns.custom.find((f) => `custom:${f.id}` === target)?.label ?? target;
+    }
+
+    // "custom:<id>" is an existing custom column; "new:<i>" is a column this import will create
+    function fieldFor(key) {
+      if (key.startsWith('custom:')) return columns.custom.find((f) => f.id === key.slice(7));
+      const i = Number(key.slice(4));
+      return { label: importState.headers[i], type: importState.inferred[i], options: [] };
+    }
+
+    function convertCustom(field, raw) {
+      if (field.type === 'checkbox') return !(NO.test(raw) || raw === '0');
+      if (field.type === 'number') {
+        const n = parseNumber(raw);
+        return isNaN(n) ? '' : n;
+      }
+      if (field.type === 'date') return toISODate(raw);
+      return raw;
+    }
+
+    function convertBuiltIn(target, raw) {
+      if (target === 'status') return normalizeStatus(raw);
+      if (target === 'joinDate') return toISODate(raw);
+      if (target === 'year') return YEARS.find(([, re]) => re.test(raw.toLowerCase()))?.[0] ?? raw;
+      return raw;
+    }
+
+    function convertRow(row) {
+      const data = {};
+      const custom = {};
+      let first = '';
+      let last = '';
+      importState.mapping.forEach((target, i) => {
+        const raw = row[i] ?? '';
+        if (target === 'skip' || !raw) return;
+        if (target === 'firstName') first = raw;
+        else if (target === 'lastName') last = raw;
+        else if (target === 'new' || target.startsWith('custom:')) {
+          const key = target === 'new' ? `new:${i}` : target;
+          const field = fieldFor(key);
+          if (field) custom[key] = convertCustom(field, raw);
+        } else {
+          data[target] = convertBuiltIn(target, raw);
+        }
+      });
+      if (!data.name && (first || last)) data.name = `${first} ${last}`.trim();
+      return { data, custom };
+    }
+
+    function planImport() {
+      const mode = dupMode();
+      const byEmail = new Map(members.filter((m) => m.email).map((m) => [m.email.toLowerCase(), m.id]));
+      return importState.rows.map((row) => {
+        const { data, custom } = convertRow(row);
+        const email = data.email?.toLowerCase();
+        const matchId = email ? byEmail.get(email) : undefined;
+        if (matchId && mode === 'update') return { action: 'update', id: matchId, data, custom };
+        if (matchId && mode === 'skip') return { action: 'skip', reason: 'already on roster', data, custom };
+        if (!data.name) return { action: 'skip', reason: 'missing name', data, custom };
+        const id = uid();
+        if (email) byEmail.set(email, id); // later rows with the same email merge into this one
+        return { action: 'add', id, data, custom };
+      });
+    }
+
+    function mappingError() {
+      const m = importState.mapping;
+      const hasName = m.includes('name') || m.includes('firstName') || m.includes('lastName');
+      if (!hasName && !(m.includes('email') && dupMode() === 'update')) {
+        return 'Match a column to Full name (or First name / Last name) so members have names.';
+      }
+      const dupe = m.find((t, i) => t !== 'skip' && t !== 'new' && m.indexOf(t) !== i);
+      if (dupe) return `More than one column is matched to “${targetLabel(dupe)}”. Pick just one.`;
+      return '';
+    }
+
+    function readSheet() {
+      const sheet = importState.workbook.Sheets[importState.sheetName];
+      const grid = XLSX.utils
+        .sheet_to_json(sheet, { header: 1, raw: false, defval: '', dateNF: 'yyyy-mm-dd', blankrows: false })
+        .map((r) => r.map((c) => String(c ?? '').trim()))
+        .filter((r) => r.some(Boolean));
+      const [head = [], ...rows] = grid;
+      const width = grid.reduce((w, r) => Math.max(w, r.length), 0);
+      const used = new Set();
+      importState.headers = Array.from({ length: width }, (_, i) => head[i] || `Column ${i + 1}`);
+      importState.rows = rows;
+      importState.mapping = importState.headers.map((h) => guessTarget(h, used));
+      importState.inferred = importState.headers.map((_, i) => inferType(rows.map((r) => r[i] ?? '')));
+    }
+
+    function targetOptions(selected, header) {
+      const opt = (value, label) => `<option value="${escapeHtml(value)}"${value === selected ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+      const custom = columns.custom.length
+        ? `<optgroup label="Your custom columns">${columns.custom.map((f) => opt(`custom:${f.id}`, f.label)).join('')}</optgroup>`
+        : '';
+      return opt('skip', 'Don’t import')
+        + `<optgroup label="Roster fields">${Object.entries(IMPORT_FIELDS).map(([k, l]) => opt(k, l)).join('')}</optgroup>`
+        + custom
+        + opt('new', `+ New column “${header}”`);
+    }
+
+    function renderImportMapping() {
+      const { fileName, workbook, sheetName, headers, rows } = importState;
+      $('#importSource').textContent = `${fileName} · ${rows.length} row${rows.length === 1 ? '' : 's'}`;
+      $('#sheetPickWrap').hidden = workbook.SheetNames.length < 2;
+      $('#sheetPick').innerHTML = workbook.SheetNames.map((n) => `<option${n === sheetName ? ' selected' : ''}>${escapeHtml(n)}</option>`).join('');
+      $('#mapList').innerHTML = headers.map((h, i) => {
+        const samples = rows.map((r) => r[i]).filter(Boolean).slice(0, 3);
+        return `
+          <div class="map-row">
+            <div class="map-source">
+              <strong>${escapeHtml(h)}</strong>
+              <small>${samples.length ? escapeHtml(samples.join(', ')) : 'empty'}</small>
+            </div>
+            <select data-col="${i}" aria-label="Import “${escapeHtml(h)}” as">${targetOptions(importState.mapping[i], h)}</select>
+          </div>`;
+      }).join('');
+      renderImportPreview();
+    }
+
+    function previewKeys() {
+      const m = importState.mapping;
+      const keys = [{ label: 'Name', get: (p) => p.data.name }];
+      for (const k of ['email', 'role', 'status', 'major', 'year', 'phone', 'joinDate', 'notes']) {
+        if (m.includes(k)) keys.push({ label: IMPORT_FIELDS[k], get: (p) => p.data[k] });
+      }
+      m.forEach((t, i) => {
+        if (t !== 'new' && !t.startsWith('custom:')) return;
+        const key = t === 'new' ? `new:${i}` : t;
+        const field = fieldFor(key);
+        if (!field) return;
+        keys.push({
+          label: field.label,
+          get: (p) => (field.type === 'checkbox' && !isEmpty(p.custom[key]) ? (p.custom[key] ? 'Yes' : 'No') : p.custom[key]),
+        });
+      });
+      return keys;
+    }
+
+    function renderImportPreview() {
+      const error = mappingError();
+      $('#mapError').textContent = error;
+      const plan = error ? [] : planImport();
+      const count = (a) => plan.filter((p) => p.action === a).length;
+      const skipped = plan.filter((p) => p.action === 'skip');
+      const reasons = [...new Set(skipped.map((p) => p.reason))].join(', ');
+      const total = count('add') + count('update');
+
+      $('#importCounts').innerHTML = error ? '' : `
+        <span>New <b>${count('add')}</b></span>
+        <span>Updated <b>${count('update')}</b></span>
+        <span>Skipped <b>${skipped.length}</b>${skipped.length ? ` (${reasons})` : ''}</span>`;
+
+      const button = $('#runImport');
+      button.disabled = !!error || !total;
+      button.textContent = total ? `Import ${total} member${total === 1 ? '' : 's'}` : 'Import';
+
+      if (error) {
+        $('#previewTable').innerHTML = '';
+        return;
+      }
+      const keys = previewKeys();
+      const shown = plan.slice(0, 8);
+      $('#previewTable').innerHTML = `
+        <thead><tr><th></th>${keys.map((k) => `<th>${escapeHtml(k.label)}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${shown.map((p) => `
+            <tr>
+              <td><span class="badge ${p.action}"${p.reason ? ` title="${escapeHtml(p.reason)}"` : ''}>${ACTION_LABELS[p.action]}</span></td>
+              ${keys.map((k) => `<td>${escapeHtml(isEmpty(k.get(p)) ? '—' : k.get(p))}</td>`).join('')}
+            </tr>`).join('')}
+          ${plan.length > shown.length ? `<tr><td colspan="${keys.length + 1}" class="empty">…and ${plan.length - shown.length} more</td></tr>` : ''}
+        </tbody>`;
+    }
+
+    function uniqueColumnLabel(label) {
+      const taken = new Set([...BUILT_INS.map((c) => c.label), 'Email', 'Notes', ...columns.custom.map((f) => f.label)].map((l) => l.toLowerCase()));
+      let name = label.slice(0, 40);
+      for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${label.slice(0, 35)} (${n})`;
+      return name;
+    }
+
+    function runImport() {
+      if (mappingError()) return;
+      const snapshot = JSON.parse(JSON.stringify({ members, columns, roles }));
+
+      // Create any new columns first so imported values have somewhere to go
+      const newFieldIds = {};
+      importState.mapping.forEach((t, i) => {
+        if (t !== 'new') return;
+        const field = {
+          id: uid(),
+          label: uniqueColumnLabel(importState.headers[i]),
+          type: importState.inferred[i],
+          options: [],
+          required: false,
+          showInTable: true,
+        };
+        columns.custom.push(field);
+        newFieldIds[`new:${i}`] = field.id;
+      });
+
+      let added = 0;
+      let updated = 0;
+      for (const p of planImport()) {
+        if (p.action === 'skip') continue;
+        const custom = {};
+        for (const [key, v] of Object.entries(p.custom)) {
+          const id = key.startsWith('custom:') ? key.slice(7) : newFieldIds[key];
+          const field = columns.custom.find((f) => f.id === id);
+          if (field?.type === 'select' && !isEmpty(v) && !field.options.includes(v)) field.options.push(v);
+          custom[id] = v;
+        }
+        if (p.action === 'add') {
+          const blank = { name: '', email: '', role: roles.default, status: 'active', major: '', year: '', phone: '', joinDate: '', notes: '' };
+          members.push({ id: p.id, ...blank, ...p.data, custom });
+          added++;
+        } else {
+          members = members.map((m) => (m.id === p.id ? { ...m, ...p.data, custom: { ...m.custom, ...custom } } : m));
+          updated++;
+        }
+      }
+
+      syncRoles();
+      save();
+      importDialog.close();
+      importUndo = snapshot;
+      $('#importBannerText').textContent = `Imported from ${importState.fileName}: ${added} added, ${updated} updated.`;
+      $('#importBanner').hidden = false;
+    }
+
+    function clearImportUndo() {
+      importUndo = null;
+      $('#importBanner').hidden = true;
+    }
+
+    function showImportStep(n) {
+      $('#importStep1').hidden = n !== 1;
+      $('#importStep2').hidden = n !== 2;
+    }
+
+    function openImport() {
+      importState = null;
+      $('#importError').textContent = '';
+      $('#googleForm').reset();
+      showImportStep(1);
+      importDialog.showModal();
+    }
+
+    async function loadImport(getWorkbook, sourceName) {
+      $('#importError').textContent = '';
+      try {
+        if (typeof XLSX === 'undefined') throw new Error('The spreadsheet reader didn’t load. Check your internet connection and reload the page.');
+        const workbook = await getWorkbook();
+        importState = { fileName: sourceName, workbook, sheetName: workbook.SheetNames[0] };
+        readSheet();
+        if (!importState.headers.length) throw new Error('That sheet looks empty.');
+        renderImportMapping();
+        showImportStep(2);
+      } catch (err) {
+        importState = null;
+        $('#importError').textContent = err.message;
+      }
+    }
+
+    // Turn a Google Sheets link into a CSV download link
+    function googleCsvUrl(input) {
+      let url;
+      try {
+        url = new URL(input.trim());
+      } catch {
+        throw new Error('Paste the full link to your Google Sheet.');
+      }
+      if (url.hostname !== 'docs.google.com' || !url.pathname.startsWith('/spreadsheets/')) {
+        throw new Error('That isn’t a Google Sheets link (it should start with docs.google.com/spreadsheets/).');
+      }
+      // "Publish to web" link: /spreadsheets/d/e/<id>/pub(html)
+      if (url.pathname.includes('/d/e/')) {
+        url.pathname = url.pathname.replace(/\/pubhtml$/, '/pub');
+        url.searchParams.set('output', 'csv');
+        return url.href;
+      }
+      // Regular share link: /spreadsheets/d/<id>/edit#gid=<tab>
+      const id = url.pathname.match(/\/spreadsheets\/d\/([^/]+)/)?.[1];
+      if (!id) throw new Error('Couldn’t find the sheet in that link.');
+      const gid = url.hash.match(/gid=(\d+)/)?.[1] ?? url.searchParams.get('gid');
+      return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv${gid ? `&gid=${gid}` : ''}`;
+    }
+
+    $('#importChooseFile').addEventListener('click', () => $('#importSheetFile').click());
+
+    $('#importSheetFile').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      const isText = /\.(csv|tsv|txt)$/i.test(file.name);
+      loadImport(async () => (isText
+        ? XLSX.read(await file.text(), { type: 'string', raw: true }) // raw keeps values like "00123" as typed
+        : XLSX.read(await file.arrayBuffer(), { cellDates: true })), file.name);
+    });
+
+    $('#googleForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = e.target.elements.url.value;
+      const button = $('#googleLoadBtn');
+      button.disabled = true;
+      button.textContent = 'Loading…';
+      await loadImport(async () => {
+        const url = googleCsvUrl(input);
+        let res;
+        try {
+          res = await fetch(url);
+        } catch {
+          throw new Error(GOOGLE_HELP);
+        }
+        const text = await res.text();
+        // A private sheet answers with Google's sign-in page instead of CSV
+        if (!res.ok || /^\s*<(!doctype|html)/i.test(text)) throw new Error(GOOGLE_HELP);
+        return XLSX.read(text, { type: 'string', raw: true });
+      }, 'Google Sheet');
+      button.disabled = false;
+      button.textContent = 'Load sheet';
+    });
+
+    $('#sheetPick').addEventListener('change', (e) => {
+      importState.sheetName = e.target.value;
+      readSheet();
+      renderImportMapping();
+    });
+
+    $('#mapList').addEventListener('change', (e) => {
+      const col = e.target.dataset.col;
+      if (col === undefined) return;
+      importState.mapping[Number(col)] = e.target.value;
+      renderImportPreview();
+    });
+
+    $('#dupModes').addEventListener('change', renderImportPreview);
+    $('#importBack').addEventListener('click', () => showImportStep(1));
+    $('#runImport').addEventListener('click', runImport);
+    importDialog.querySelectorAll('[data-close-import]').forEach((b) => b.addEventListener('click', () => importDialog.close()));
+
+    $('#undoImport').addEventListener('click', () => {
+      if (!importUndo) return;
+      ({ members, columns, roles } = importUndo);
+      save();
+    });
+    $('#dismissBanner').addEventListener('click', clearImportUndo);
+
     // ---------- Backup / Restore ----------
     function validate(data) {
       if (!Array.isArray(data)) throw new Error('This file is not a roster backup.');
@@ -1119,6 +1622,7 @@
     fieldForm.elements.columnType.innerHTML = Object.entries(FIELD_TYPES).map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
 
     $('#addBtn').addEventListener('click', () => openForm());
+    $('#importMembersBtn').addEventListener('click', openImport);
     $('#cancelBtn').addEventListener('click', () => dialog.close());
     ['#search', '#filterRole', '#filterStatus'].forEach((s) => $(s).addEventListener('input', renderMembers));
 
