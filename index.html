@@ -10,42 +10,122 @@
   <header>
     <div>
       <h1>Roster Tracker</h1>
-      <p>Manage your student organization's members.</p>
+      <p>Manage your student organization's members and event attendance.</p>
     </div>
     <div class="toolbar header-actions">
-      <button class="primary" id="addBtn">+ Add member</button>
-      <button id="columnsBtn" title="Add, edit, or hide columns">Manage columns</button>
       <button id="exportBtn" title="Download a backup file of the roster">Download backup</button>
       <button id="importBtn" title="Load a roster from a backup file">Restore backup</button>
       <input type="file" id="importFile" accept="application/json,.json" hidden>
     </div>
   </header>
 
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="members" aria-selected="true">Members</button>
+    <button role="tab" data-tab="attendance" aria-selected="false">Attendance</button>
+  </nav>
+
   <main>
-    <section class="panel">
-      <h2>Members</h2>
-      <div class="toolbar">
-        <input type="search" id="search" placeholder="Search members…">
-        <select id="filterRole"><option value="">All roles</option></select>
-        <select id="filterStatus">
-          <option value="">All statuses</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-          <option value="alumni">Alumni</option>
-        </select>
-      </div>
-      <div class="stats" id="stats"></div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr id="headRow"></tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
-    </section>
+    <!-- ===== Members tab ===== -->
+    <div id="membersView">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Members</h2>
+          <div class="toolbar">
+            <button class="primary" id="addBtn">+ Add member</button>
+            <button id="rolesBtn" title="Add, rename, or remove roles">Manage roles</button>
+            <button id="columnsBtn" title="Add, edit, or hide columns">Manage columns</button>
+          </div>
+        </div>
+        <div class="toolbar">
+          <input type="search" id="search" placeholder="Search members…">
+          <select id="filterRole"></select>
+          <select id="filterStatus">
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="alumni">Alumni</option>
+          </select>
+        </div>
+        <div class="stats" id="stats"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr id="headRow"></tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===== Attendance tab ===== -->
+    <div id="attendanceView" class="split" hidden>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Events</h2>
+          <button class="primary" id="addEventBtn">+ Add new event</button>
+        </div>
+        <div class="toolbar">
+          <input type="search" id="eventSearch" placeholder="Search events…">
+          <select id="eventSort" aria-label="Sort events">
+            <option value="date-desc">Newest first</option>
+            <option value="date-asc">Oldest first</option>
+            <option value="name">Name A–Z</option>
+            <option value="turnout">Highest turnout</option>
+          </select>
+        </div>
+        <ul class="event-list" id="eventList"></ul>
+      </section>
+
+      <section class="panel">
+        <div class="empty" id="eventEmpty">Select an event, or add a new one to start taking attendance.</div>
+        <div id="eventSheet" hidden>
+          <div class="panel-head">
+            <div>
+              <h2 id="eventTitle"></h2>
+              <p class="hint" id="eventMeta"></p>
+            </div>
+            <div class="toolbar">
+              <button id="editEventBtn">Edit event</button>
+              <button class="danger" id="deleteEventBtn">Delete event</button>
+            </div>
+          </div>
+          <p class="event-notes" id="eventNotes"></p>
+          <div class="stats" id="eventStats"></div>
+          <div class="toolbar">
+            <input type="search" id="attSearch" placeholder="Search members…">
+            <select id="attFilter" aria-label="Filter by attendance">
+              <option value="">Everyone</option>
+              <option value="present">Present</option>
+              <option value="absent">Absent</option>
+              <option value="unmarked">Not marked</option>
+            </select>
+            <select id="attRole" aria-label="Filter by role"></select>
+          </div>
+          <div class="toolbar">
+            <button class="small" id="markShownPresent">Mark shown as present</button>
+            <button class="small" id="markUnmarkedAbsent">Mark unmarked as absent</button>
+            <button class="small" id="clearShown">Clear shown</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr id="attHead">
+                  <th data-sort="name" data-label="Name">Name</th>
+                  <th data-sort="role" data-label="Role">Role</th>
+                  <th data-sort="status" data-label="Status">Status</th>
+                  <th data-sort="attendance" data-label="Attended?">Attended?</th>
+                </tr>
+              </thead>
+              <tbody id="attRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
   </main>
 
+  <!-- ===== Dialogs ===== -->
   <dialog id="memberDialog">
     <form method="dialog" id="memberForm">
       <h2 id="dialogTitle">Add member</h2>
@@ -96,6 +176,36 @@
     </form>
   </dialog>
 
+  <dialog id="rolesDialog">
+    <div class="dialog-body">
+      <h2>Manage roles</h2>
+      <p class="hint">Rename a role to update every member who has it. New members start with the default role.</p>
+      <ul class="column-list" id="roleList"></ul>
+      <form class="inline-form" id="newRoleForm">
+        <input name="roleName" maxlength="40" placeholder="New role, e.g. Social Chair" aria-label="New role name">
+        <button type="submit">+ Add role</button>
+      </form>
+      <div class="error" id="roleError"></div>
+      <div class="dialog-actions">
+        <button type="button" class="primary" id="rolesDone">Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="reassignDialog">
+    <form method="dialog" id="reassignForm">
+      <h2>Delete role</h2>
+      <p id="reassignText"></p>
+      <label>Move them to
+        <select name="target"></select>
+      </label>
+      <div class="dialog-actions">
+        <button type="button" id="reassignCancel">Cancel</button>
+        <button type="submit" class="primary">Delete role</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="columnsDialog">
     <div class="dialog-body">
       <h2>Manage columns</h2>
@@ -140,10 +250,40 @@
     </form>
   </dialog>
 
+  <dialog id="eventDialog">
+    <form method="dialog" id="eventForm">
+      <h2 id="eventDialogTitle">Add new event</h2>
+      <div class="grid">
+        <label class="full">Event name
+          <input name="eventName" required maxlength="80" placeholder="e.g. General Meeting">
+        </label>
+        <label>Date
+          <input name="eventDate" type="date" required>
+        </label>
+        <label>Time
+          <input name="eventTime" type="time">
+        </label>
+        <label class="full">Location
+          <input name="eventLocation" placeholder="e.g. Student Union, Room 204">
+        </label>
+        <label class="full">Notes
+          <textarea name="eventNotes" rows="2"></textarea>
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" id="eventCancel">Cancel</button>
+        <button type="submit" class="primary">Save event</button>
+      </div>
+    </form>
+  </dialog>
+
   <script>
     const STORAGE_KEY = 'roster-app:members';
     const COLUMNS_KEY = 'roster-app:columns';
-    const ROLES = ['President', 'Vice President', 'Treasurer', 'Secretary', 'Officer', 'Member'];
+    const ROLES_KEY = 'roster-app:roles';
+    const EVENTS_KEY = 'roster-app:events';
+
+    const DEFAULT_ROLES = ['President', 'Vice President', 'Treasurer', 'Secretary', 'Officer', 'Member'];
 
     const FIELD_TYPES = {
       text: 'Text',
@@ -162,6 +302,18 @@
       { key: 'status', label: 'Status', cell: (m) => `<span class="badge ${escapeHtml(m.status)}">${escapeHtml(m.status)}</span>` },
       { key: 'phone', label: 'Phone' },
       { key: 'joinDate', label: 'Joined' },
+      {
+        key: 'attendance',
+        label: 'Attendance',
+        value: (m) => {
+          const { present, marked } = attendanceFor(m);
+          return marked ? present / marked : '';
+        },
+        cell: (m) => {
+          const { present, marked } = attendanceFor(m);
+          return marked ? `${present} of ${marked} (${Math.round((present / marked) * 100)}%)` : '—';
+        },
+      },
     ];
 
     const SAMPLE = [
@@ -170,11 +322,19 @@
       { id: uid(), name: 'Priya Shah', email: 'pshah@university.edu', role: 'Member', major: 'Biology', year: 'Sophomore', status: 'inactive', phone: '', joinDate: '2024-09-10', notes: '', custom: {} },
     ];
 
-    let members = load();
-    let columns = loadColumns();
+    let members = readStored(STORAGE_KEY) ?? SAMPLE;
+    let columns = normalizeColumns(readStored(COLUMNS_KEY) ?? { hidden: ['phone'] });
+    let roles = normalizeRoles(readStored(ROLES_KEY));
+    let events = normalizeEvents(readStored(EVENTS_KEY));
+    syncRoles();
+
     let editingId = null;
     let editingFieldId = null;
+    let editingEventId = null;
+    let selectedEventId = null;
+    let deletingRoleIndex = null;
     let sort = { key: 'name', dir: 1 };
+    let attSort = { key: 'name', dir: 1 };
 
     const $ = (sel) => document.querySelector(sel);
     const dialog = $('#memberDialog');
@@ -182,25 +342,23 @@
     const columnsDialog = $('#columnsDialog');
     const fieldDialog = $('#fieldDialog');
     const fieldForm = $('#fieldForm');
+    const rolesDialog = $('#rolesDialog');
+    const reassignDialog = $('#reassignDialog');
+    const reassignForm = $('#reassignForm');
+    const eventDialog = $('#eventDialog');
+    const eventForm = $('#eventForm');
 
     function uid() {
       return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
     }
 
-    function load() {
+    function readStored(key) {
       try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) return JSON.parse(raw);
-      } catch {}
-      return SAMPLE;
-    }
-
-    function loadColumns() {
-      try {
-        const raw = localStorage.getItem(COLUMNS_KEY);
-        if (raw) return normalizeColumns(JSON.parse(raw));
-      } catch {}
-      return { custom: [], hidden: ['phone'] };
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
     }
 
     // Column settings: custom fields the org defined, plus which standard columns are hidden
@@ -220,10 +378,39 @@
       };
     }
 
+    function normalizeRoles(r) {
+      const list = [...new Set((Array.isArray(r?.list) ? r.list : []).map((s) => String(s).trim()).filter(Boolean))];
+      if (!list.length) return { list: [...DEFAULT_ROLES], default: 'Member' };
+      return { list, default: list.includes(r.default) ? r.default : list[list.length - 1] };
+    }
+
+    function normalizeEvents(e) {
+      return (Array.isArray(e) ? e : [])
+        .filter((ev) => ev && ev.id && ev.name)
+        .map((ev) => ({
+          id: String(ev.id),
+          name: String(ev.name),
+          date: String(ev.date ?? ''),
+          time: String(ev.time ?? ''),
+          location: String(ev.location ?? ''),
+          notes: String(ev.notes ?? ''),
+          attendance: ev.attendance && typeof ev.attendance === 'object' ? ev.attendance : {},
+        }));
+    }
+
+    // Make sure every role a member has shows up in the role list (e.g. after restoring an old backup)
+    function syncRoles() {
+      for (const m of members) {
+        if (m.role && !roles.list.includes(m.role)) roles.list.push(m.role);
+      }
+    }
+
     function save() {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(members));
         localStorage.setItem(COLUMNS_KEY, JSON.stringify(columns));
+        localStorage.setItem(ROLES_KEY, JSON.stringify(roles));
+        localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
       } catch {}
       render();
     }
@@ -233,6 +420,18 @@
     }
 
     const isEmpty = (v) => v === undefined || v === null || v === '';
+    const today = () => new Date().toLocaleDateString('en-CA'); // local YYYY-MM-DD
+
+    function fillSelect(select, items, allLabel) {
+      const current = select.value;
+      select.innerHTML = `<option value="">${allLabel}</option>` + items.map((i) => `<option>${escapeHtml(i)}</option>`).join('');
+      if (items.includes(current)) select.value = current;
+    }
+
+    function render() {
+      renderMembers();
+      renderAttendance();
+    }
 
     // ---------- Columns ----------
     function visibleColumns() {
@@ -243,7 +442,9 @@
     }
 
     function rawValue(m, key) {
-      return key.startsWith('custom:') ? m.custom?.[key.slice(7)] : m[key];
+      if (key.startsWith('custom:')) return m.custom?.[key.slice(7)];
+      const builtIn = BUILT_INS.find((c) => c.key === key);
+      return builtIn?.value ? builtIn.value(m) : m[key];
     }
 
     function formatCustom(field, v) {
@@ -262,7 +463,7 @@
       return escapeHtml(m[col.key] || '—');
     }
 
-    // ---------- Read ----------
+    // ---------- Members: Read ----------
     function compare(a, b) {
       const x = rawValue(a, sort.key);
       const y = rawValue(b, sort.key);
@@ -286,7 +487,9 @@
         .sort(compare);
     }
 
-    function render() {
+    function renderMembers() {
+      fillSelect($('#filterRole'), roles.list, 'All roles');
+
       const cols = visibleColumns();
       if (!cols.some((c) => c.key === sort.key)) sort = { key: 'name', dir: 1 };
 
@@ -320,7 +523,7 @@
         <span>Showing <b>${list.length}</b></span>`;
     }
 
-    // ---------- Create / Update ----------
+    // ---------- Members: Create / Update ----------
     function renderCustomInputs(member) {
       const wrap = $('#customFields');
       wrap.hidden = !columns.custom.length;
@@ -350,8 +553,10 @@
     function openForm(member) {
       editingId = member?.id ?? null;
       $('#dialogTitle').textContent = member ? 'Edit member' : 'Add member';
+      const roleOptions = member?.role && !roles.list.includes(member.role) ? [...roles.list, member.role] : roles.list;
+      form.elements.role.innerHTML = roleOptions.map((r) => `<option>${escapeHtml(r)}</option>`).join('');
       form.reset();
-      const data = member ?? { role: 'Member', status: 'active', year: 'Freshman', joinDate: new Date().toISOString().slice(0, 10) };
+      const data = member ?? { role: roles.default, status: 'active', year: 'Freshman', joinDate: today() };
       for (const el of form.elements) {
         if (el.name && data[el.name] !== undefined) el.value = data[el.name];
       }
@@ -382,13 +587,123 @@
       save();
     });
 
-    // ---------- Delete ----------
+    // ---------- Members: Delete ----------
     function remove(id) {
       const m = members.find((x) => x.id === id);
-      if (!m || !confirm(`Remove ${m.name} from the roster?`)) return;
+      if (!m || !confirm(`Remove ${m.name} from the roster? Their attendance records will also be removed.`)) return;
       members = members.filter((x) => x.id !== id);
+      events = events.map((ev) => {
+        const { [id]: _, ...rest } = ev.attendance;
+        return { ...ev, attendance: rest };
+      });
       save();
     }
+
+    // ---------- Manage roles ----------
+    const roleCount = (role) => members.filter((m) => m.role === role).length;
+
+    function roleNameError(name, ignoreIndex = -1) {
+      if (!name) return 'Role names can’t be blank.';
+      if (roles.list.some((r, j) => j !== ignoreIndex && r.toLowerCase() === name.toLowerCase())) return `There's already a role called “${name}”.`;
+      return '';
+    }
+
+    function renderRoleManager() {
+      const last = roles.list.length - 1;
+      $('#roleList').innerHTML = roles.list.map((r, i) => {
+        const n = roleCount(r);
+        return `
+          <li data-index="${i}">
+            <div class="role-main">
+              <input class="role-input" value="${escapeHtml(r)}" maxlength="40" aria-label="Role name">
+              <small>${n} member${n === 1 ? '' : 's'}</small>
+            </div>
+            <div class="column-actions">
+              <label class="check" title="New members start with this role">
+                <input type="radio" name="defaultRole" data-action="default"${r === roles.default ? ' checked' : ''}> Default
+              </label>
+              <button class="small" data-action="up" aria-label="Move up"${i === 0 ? ' disabled' : ''}>↑</button>
+              <button class="small" data-action="down" aria-label="Move down"${i === last ? ' disabled' : ''}>↓</button>
+              <button class="small danger" data-action="delete"${roles.list.length === 1 ? ' disabled' : ''}>Delete</button>
+            </div>
+          </li>`;
+      }).join('');
+    }
+
+    function renameRole(i, name) {
+      const old = roles.list[i];
+      if (name === old) return;
+      const error = roleNameError(name, i);
+      $('#roleError').textContent = error;
+      if (error) return renderRoleManager();
+      roles.list[i] = name;
+      if (roles.default === old) roles.default = name;
+      members = members.map((m) => (m.role === old ? { ...m, role: name } : m));
+      save();
+      renderRoleManager();
+    }
+
+    function deleteRole(i, target) {
+      const role = roles.list[i];
+      roles.list.splice(i, 1);
+      if (target) members = members.map((m) => (m.role === role ? { ...m, role: target } : m));
+      if (roles.default === role) roles.default = target ?? roles.list[roles.list.length - 1];
+      $('#roleError').textContent = '';
+      save();
+      renderRoleManager();
+    }
+
+    function requestDeleteRole(i) {
+      const role = roles.list[i];
+      const n = roleCount(role);
+      if (!n) {
+        if (confirm(`Delete the “${role}” role?`)) deleteRole(i, null);
+        return;
+      }
+      deletingRoleIndex = i;
+      $('#reassignText').textContent = `${n} member${n === 1 ? ' has' : 's have'} the “${role}” role. Choose a new role for ${n === 1 ? 'that member' : 'them'}.`;
+      reassignForm.elements.target.innerHTML = roles.list
+        .filter((_, j) => j !== i)
+        .map((r) => `<option${r === roles.default ? ' selected' : ''}>${escapeHtml(r)}</option>`)
+        .join('');
+      reassignDialog.showModal();
+    }
+
+    $('#roleList').addEventListener('change', (e) => {
+      const i = Number(e.target.closest('li[data-index]')?.dataset.index);
+      if (e.target.classList.contains('role-input')) renameRole(i, e.target.value.trim());
+      if (e.target.dataset.action === 'default') {
+        roles.default = roles.list[i];
+        save();
+      }
+    });
+
+    $('#roleList').addEventListener('click', (e) => {
+      const action = e.target.dataset.action;
+      const i = Number(e.target.closest('li[data-index]')?.dataset.index);
+      if (action === 'delete') return requestDeleteRole(i);
+      if (action === 'up' || action === 'down') {
+        const j = action === 'up' ? i - 1 : i + 1;
+        [roles.list[i], roles.list[j]] = [roles.list[j], roles.list[i]];
+        save();
+        renderRoleManager();
+      }
+    });
+
+    $('#newRoleForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = e.target.elements.roleName;
+      const name = input.value.trim();
+      const error = roleNameError(name);
+      $('#roleError').textContent = error;
+      if (error) return;
+      roles.list.push(name);
+      input.value = '';
+      save();
+      renderRoleManager();
+    });
+
+    reassignForm.addEventListener('submit', () => deleteRole(deletingRoleIndex, reassignForm.elements.target.value));
 
     // ---------- Manage columns ----------
     function renderColumnManager() {
@@ -504,24 +819,259 @@
       renderColumnManager();
     });
 
+    // ---------- Attendance ----------
+    const ATT_ORDER = { present: 0, absent: 1, unmarked: 2 };
+    const markOf = (ev, m) => ev.attendance[m.id] ?? 'unmarked';
+
+    function attendanceFor(m) {
+      let present = 0;
+      let marked = 0;
+      for (const ev of events) {
+        const mark = ev.attendance[m.id];
+        if (!mark) continue;
+        marked++;
+        if (mark === 'present') present++;
+      }
+      return { present, marked };
+    }
+
+    function eventCounts(ev) {
+      let present = 0;
+      let absent = 0;
+      for (const m of members) {
+        const mark = markOf(ev, m);
+        if (mark === 'present') present++;
+        if (mark === 'absent') absent++;
+      }
+      return { present, absent, unmarked: members.length - present - absent };
+    }
+
+    function formatDate(date) {
+      const d = new Date(`${date}T00:00`);
+      return isNaN(d) ? date : d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function formatTime(time) {
+      const d = new Date(`1970-01-01T${time}`);
+      return isNaN(d) ? time : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    }
+
+    const eventMeta = (ev) => [formatDate(ev.date), ev.time && formatTime(ev.time), ev.location].filter(Boolean).join(' · ');
+
+    function sortedEvents() {
+      const q = $('#eventSearch').value.trim().toLowerCase();
+      const by = $('#eventSort').value;
+      const when = (ev) => `${ev.date}T${ev.time || '00:00'}`;
+      return events
+        .filter((ev) => !q || [ev.name, ev.location, ev.notes].join(' ').toLowerCase().includes(q))
+        .sort((a, b) => {
+          if (by === 'name') return a.name.localeCompare(b.name);
+          if (by === 'turnout') return eventCounts(b).present - eventCounts(a).present;
+          const diff = when(a).localeCompare(when(b));
+          return by === 'date-asc' ? diff : -diff;
+        });
+    }
+
+    function renderAttendance() {
+      const list = sortedEvents();
+      if (!events.some((ev) => ev.id === selectedEventId)) selectedEventId = list[0]?.id ?? null;
+
+      $('#eventList').innerHTML = list.length
+        ? list.map((ev) => {
+          const c = eventCounts(ev);
+          const upcoming = ev.date > today() ? ' <span class="badge upcoming">Upcoming</span>' : '';
+          return `
+            <li>
+              <button class="event-item${ev.id === selectedEventId ? ' on' : ''}" data-id="${escapeHtml(ev.id)}">
+                <strong>${escapeHtml(ev.name)}</strong>${upcoming}
+                <small>${escapeHtml(eventMeta(ev))}</small>
+                <small>${c.present} present · ${c.absent} absent</small>
+              </button>
+            </li>`;
+        }).join('')
+        : `<li class="empty">${events.length ? 'No events match your search.' : 'No events yet. Click “Add new event” to create one.'}</li>`;
+
+      renderEventSheet();
+    }
+
+    function sheetRows(ev) {
+      const q = $('#attSearch').value.trim().toLowerCase();
+      const mark = $('#attFilter').value;
+      const role = $('#attRole').value;
+      const value = (m) => (attSort.key === 'attendance' ? ATT_ORDER[markOf(ev, m)] : String(m[attSort.key] ?? ''));
+      return members
+        .filter((m) => !q || `${m.name} ${m.email}`.toLowerCase().includes(q))
+        .filter((m) => !role || m.role === role)
+        .filter((m) => !mark || markOf(ev, m) === mark)
+        .sort((a, b) => {
+          const x = value(a);
+          const y = value(b);
+          return (typeof x === 'number' ? x - y : x.localeCompare(y)) * attSort.dir;
+        });
+    }
+
+    function renderEventSheet() {
+      const ev = events.find((e) => e.id === selectedEventId);
+      $('#eventEmpty').hidden = !!ev;
+      $('#eventSheet').hidden = !ev;
+      if (!ev) return;
+
+      $('#eventTitle').textContent = ev.name;
+      $('#eventMeta').textContent = eventMeta(ev);
+      $('#eventNotes').textContent = ev.notes;
+      $('#eventNotes').hidden = !ev.notes;
+      fillSelect($('#attRole'), roles.list, 'All roles');
+
+      const c = eventCounts(ev);
+      const turnout = members.length ? Math.round((c.present / members.length) * 100) : 0;
+      $('#eventStats').innerHTML = `
+        <span>Present <b>${c.present}</b></span>
+        <span>Absent <b>${c.absent}</b></span>
+        <span>Not marked <b>${c.unmarked}</b></span>
+        <span>Turnout <b>${turnout}%</b></span>`;
+
+      document.querySelectorAll('#attHead th').forEach((th) => {
+        const arrow = th.dataset.sort === attSort.key ? (attSort.dir === 1 ? ' ▲' : ' ▼') : '';
+        th.textContent = th.dataset.label + arrow;
+      });
+
+      const rows = sheetRows(ev);
+      $('#attRows').innerHTML = rows.length
+        ? rows.map((m) => {
+          const mark = markOf(ev, m);
+          const btn = (value, text) =>
+            `<button class="small${mark === value ? ` on ${value}` : ''}" data-mark="${value}" aria-pressed="${mark === value}">${text}</button>`;
+          return `
+            <tr data-id="${escapeHtml(m.id)}">
+              <td><strong>${escapeHtml(m.name)}</strong><br><small class="member-email">${escapeHtml(m.email)}</small></td>
+              <td>${escapeHtml(m.role || '—')}</td>
+              <td><span class="badge ${escapeHtml(m.status)}">${escapeHtml(m.status)}</span></td>
+              <td><div class="seg" role="group" aria-label="Attendance for ${escapeHtml(m.name)}">${btn('present', 'Present')}${btn('absent', 'Absent')}</div></td>
+            </tr>`;
+        }).join('')
+        : `<tr><td colspan="4" class="empty">${members.length ? 'No members match these filters.' : 'Add members on the Members tab to take attendance.'}</td></tr>`;
+    }
+
+    function setMarks(memberIds, mark) {
+      const ev = events.find((e) => e.id === selectedEventId);
+      if (!ev) return;
+      const attendance = { ...ev.attendance };
+      for (const id of memberIds) {
+        if (mark) attendance[id] = mark;
+        else delete attendance[id];
+      }
+      events = events.map((e) => (e.id === ev.id ? { ...e, attendance } : e));
+      save();
+    }
+
+    function openEventForm(ev) {
+      editingEventId = ev?.id ?? null;
+      $('#eventDialogTitle').textContent = ev ? 'Edit event' : 'Add new event';
+      eventForm.reset();
+      const els = eventForm.elements;
+      els.eventName.value = ev?.name ?? '';
+      els.eventDate.value = ev?.date ?? today();
+      els.eventTime.value = ev?.time ?? '';
+      els.eventLocation.value = ev?.location ?? '';
+      els.eventNotes.value = ev?.notes ?? '';
+      eventDialog.showModal();
+    }
+
+    eventForm.addEventListener('submit', (e) => {
+      const els = eventForm.elements;
+      const name = els.eventName.value.trim();
+      if (!name) {
+        e.preventDefault();
+        els.eventName.focus();
+        return;
+      }
+      const details = {
+        name,
+        date: els.eventDate.value,
+        time: els.eventTime.value,
+        location: els.eventLocation.value.trim(),
+        notes: els.eventNotes.value.trim(),
+      };
+      if (editingEventId) {
+        events = events.map((ev) => (ev.id === editingEventId ? { ...ev, ...details } : ev));
+      } else {
+        const ev = { id: uid(), ...details, attendance: {} };
+        events.push(ev);
+        selectedEventId = ev.id;
+      }
+      save();
+    });
+
+    $('#eventList').addEventListener('click', (e) => {
+      const id = e.target.closest('.event-item')?.dataset.id;
+      if (!id) return;
+      selectedEventId = id;
+      renderAttendance();
+    });
+
+    $('#attRows').addEventListener('click', (e) => {
+      const mark = e.target.dataset.mark;
+      const id = e.target.closest('tr[data-id]')?.dataset.id;
+      if (!mark || !id) return;
+      const ev = events.find((x) => x.id === selectedEventId);
+      setMarks([id], ev.attendance[id] === mark ? null : mark); // clicking the active choice clears it
+    });
+
+    $('#attHead').addEventListener('click', (e) => {
+      const key = e.target.closest('th[data-sort]')?.dataset.sort;
+      if (!key) return;
+      attSort = { key, dir: attSort.key === key ? -attSort.dir : 1 };
+      renderEventSheet();
+    });
+
+    $('#markShownPresent').addEventListener('click', () => {
+      const ev = events.find((x) => x.id === selectedEventId);
+      setMarks(sheetRows(ev).map((m) => m.id), 'present');
+    });
+
+    $('#markUnmarkedAbsent').addEventListener('click', () => {
+      const ev = events.find((x) => x.id === selectedEventId);
+      setMarks(sheetRows(ev).filter((m) => markOf(ev, m) === 'unmarked').map((m) => m.id), 'absent');
+    });
+
+    $('#clearShown').addEventListener('click', () => {
+      const ev = events.find((x) => x.id === selectedEventId);
+      if (confirm('Clear attendance marks for everyone shown?')) setMarks(sheetRows(ev).map((m) => m.id), null);
+    });
+
+    $('#editEventBtn').addEventListener('click', () => openEventForm(events.find((ev) => ev.id === selectedEventId)));
+
+    $('#deleteEventBtn').addEventListener('click', () => {
+      const ev = events.find((x) => x.id === selectedEventId);
+      if (!ev || !confirm(`Delete “${ev.name}” and its attendance records?`)) return;
+      events = events.filter((x) => x.id !== ev.id);
+      selectedEventId = null;
+      save();
+    });
+
     // ---------- Backup / Restore ----------
     function validate(data) {
       if (!Array.isArray(data)) throw new Error('This file is not a roster backup.');
       return data.map((m, i) => {
         if (typeof m !== 'object' || m === null || !m.name) throw new Error(`Entry ${i + 1} is missing a member name.`);
         const custom = m.custom && typeof m.custom === 'object' ? m.custom : {};
-        return { id: m.id || uid(), role: 'Member', status: 'active', ...m, custom };
+        return { id: m.id || uid(), role: roles.default, status: 'active', ...m, custom };
       });
     }
 
-    // Older backups were a plain list of members; newer ones also carry column settings
+    // Older backups were a plain list of members; newer ones also carry columns, roles, and events
     function parseBackup(data) {
-      if (Array.isArray(data)) return { members: validate(data), columns: null };
-      return { members: validate(data?.members), columns: data.columns ? normalizeColumns(data.columns) : null };
+      if (Array.isArray(data)) return { members: validate(data) };
+      return {
+        members: validate(data?.members),
+        columns: data.columns ? normalizeColumns(data.columns) : null,
+        roles: data.roles ? normalizeRoles(data.roles) : null,
+        events: Array.isArray(data.events) ? normalizeEvents(data.events) : null,
+      };
     }
 
     $('#exportBtn').addEventListener('click', () => {
-      const backup = { app: 'roster-tracker', version: 2, columns, members };
+      const backup = { app: 'roster-tracker', version: 3, columns, roles, events, members };
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -536,10 +1086,17 @@
       if (!file) return;
       try {
         const restored = parseBackup(JSON.parse(await file.text()));
-        const extra = restored.columns ? ' and its column settings' : '';
-        if (!confirm(`Replace the current roster with ${restored.members.length} member(s)${extra} from this backup?`)) return;
+        const parts = [`${restored.members.length} member(s)`];
+        if (restored.events) parts.push(`${restored.events.length} event(s)`);
+        if (restored.roles) parts.push('roles');
+        if (restored.columns) parts.push('column settings');
+        if (!confirm(`Replace your current data with ${parts.join(', ')} from this backup?`)) return;
         members = restored.members;
         if (restored.columns) columns = restored.columns;
+        if (restored.roles) roles = restored.roles;
+        if (restored.events) events = restored.events;
+        syncRoles();
+        selectedEventId = null;
         save();
       } catch (err) {
         alert(`Couldn't restore backup: ${err instanceof SyntaxError ? 'the file is not a valid backup.' : err.message}`);
@@ -548,14 +1105,30 @@
       }
     });
 
+    // ---------- Tabs ----------
+    function showTab(tab) {
+      document.querySelectorAll('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+      $('#membersView').hidden = tab !== 'members';
+      $('#attendanceView').hidden = tab !== 'attendance';
+      location.hash = tab;
+    }
+
+    document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
     // ---------- Wiring ----------
-    $('#filterRole').innerHTML += ROLES.map((r) => `<option>${r}</option>`).join('');
-    form.elements.role.innerHTML = ROLES.map((r) => `<option>${r}</option>`).join('');
     fieldForm.elements.columnType.innerHTML = Object.entries(FIELD_TYPES).map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
 
     $('#addBtn').addEventListener('click', () => openForm());
     $('#cancelBtn').addEventListener('click', () => dialog.close());
-    ['#search', '#filterRole', '#filterStatus'].forEach((s) => $(s).addEventListener('input', render));
+    ['#search', '#filterRole', '#filterStatus'].forEach((s) => $(s).addEventListener('input', renderMembers));
+
+    $('#rolesBtn').addEventListener('click', () => {
+      $('#roleError').textContent = '';
+      renderRoleManager();
+      rolesDialog.showModal();
+    });
+    $('#rolesDone').addEventListener('click', () => rolesDialog.close());
+    $('#reassignCancel').addEventListener('click', () => reassignDialog.close());
 
     $('#columnsBtn').addEventListener('click', () => {
       renderColumnManager();
@@ -565,6 +1138,11 @@
     $('#newColumnBtn').addEventListener('click', () => openFieldForm());
     $('#fieldCancel').addEventListener('click', () => fieldDialog.close());
     fieldForm.elements.columnType.addEventListener('change', syncFieldType);
+
+    $('#addEventBtn').addEventListener('click', () => openEventForm());
+    $('#eventCancel').addEventListener('click', () => eventDialog.close());
+    ['#eventSearch', '#eventSort'].forEach((s) => $(s).addEventListener('input', renderAttendance));
+    ['#attSearch', '#attFilter', '#attRole'].forEach((s) => $(s).addEventListener('input', renderEventSheet));
 
     $('#rows').addEventListener('click', (e) => {
       const row = e.target.closest('tr[data-id]');
@@ -579,9 +1157,10 @@
       const key = e.target.closest('th[data-sort]')?.dataset.sort;
       if (!key) return;
       sort = { key, dir: sort.key === key ? -sort.dir : 1 };
-      render();
+      renderMembers();
     });
 
+    showTab(location.hash === '#attendance' ? 'attendance' : 'members');
     render();
   </script>
 </body>
